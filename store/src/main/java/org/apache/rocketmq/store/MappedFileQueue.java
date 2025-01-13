@@ -35,17 +35,24 @@ public class MappedFileQueue {
 
     private static final int DELETE_FILES_BATCH_MAX = 10;
 
+    // 存储目录
     private final String storePath;
 
+    // 单个文件的存储大小
     private final int mappedFileSize;
 
+    // MappedFile集合
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
+    // 创建MappedFile服务类
     private final AllocateMappedFileService allocateMappedFileService;
-
+    // 当前刷盘指针，表示该指针之前的所有数据全部持久化到磁盘
     private long flushedWhere = 0;
+    // 当前数据提交指针，内存中ByteBuffer当前的写指针，该值大于、等于flushedWhere
+    // (write >= commit >= flush位置)
     private long committedWhere = 0;
 
+    //当前已刷盘的最后一条消息存储的时间戳
     private volatile long storeTimestamp = 0;
 
     public MappedFileQueue(final String storePath, int mappedFileSize,
@@ -74,6 +81,12 @@ public class MappedFileQueue {
         }
     }
 
+    /**
+     * 根据消息存储时间戳查找MappdFile
+     * 从MappedFile列表中第一个
+     * 文件开始查找，找到第一个最后一次更新时间大于待查找时间戳的文
+     * 件，如果不存在，则返回最后一个MappedFile
+     */
     public MappedFile getMappedFileByTime(final long timestamp) {
         Object[] mfs = this.copyMappedFiles(0);
 
@@ -90,6 +103,11 @@ public class MappedFileQueue {
         return (MappedFile) mfs[mfs.length - 1];
     }
 
+    /**
+     * 拷贝一份mappedFiles
+     * @param
+     * @return
+     */
     private Object[] copyMappedFiles(final int reservedMappedFiles) {
         Object[] mfs;
 
@@ -191,35 +209,48 @@ public class MappedFileQueue {
         return 0;
     }
 
+    /**
+     * 通过起始偏移量，获取最后一个MappedFile，如果不存在，可自动创建
+     * @param startOffset 起始偏移量
+     * @param needCreate 是否需要创建MappedFile
+     * @return MappedFile
+     */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
+        // createOffset 文件名
         long createOffset = -1;
         MappedFile mappedFileLast = getLastMappedFile();
 
         if (mappedFileLast == null) {
+            // 1G 2G 3G 这样的文件名
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
 
         if (mappedFileLast != null && mappedFileLast.isFull()) {
+            // 最后一个文件已写满，文件名 = 上一个文件的初始偏移量 + 文件大小
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
 
         if (createOffset != -1 && needCreate) {
+            // 文件路径
             String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
+            // 下一个文件的文件路径
             String nextNextFilePath = this.storePath + File.separator
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
             MappedFile mappedFile = null;
 
             if (this.allocateMappedFileService != null) {
+                // 创建MappedFile
                 mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
             } else {
                 try {
+                    // 直接创建MappedFile
                     mappedFile = new MappedFile(nextFilePath, this.mappedFileSize);
                 } catch (IOException e) {
                     log.error("create mappedFile exception", e);
                 }
             }
-
+            // 添加到MappedFile集合
             if (mappedFile != null) {
                 if (this.mappedFiles.isEmpty()) {
                     mappedFile.setFirstCreateInQueue(true);
@@ -237,11 +268,18 @@ public class MappedFileQueue {
         return getLastMappedFile(startOffset, true);
     }
 
+    /**
+     * 获取最后一个MappedFile
+     * @return MappedFile
+     */
     public MappedFile getLastMappedFile() {
         MappedFile mappedFileLast = null;
 
         while (!this.mappedFiles.isEmpty()) {
             try {
+                //由于get和size没有加锁
+                // size获取的值可能是旧的，所以可能出现错误的大小，导致索引越界
+                // get获取的值可能是旧的数组，所以可能出现索引越界
                 mappedFileLast = this.mappedFiles.get(this.mappedFiles.size() - 1);
                 break;
             } catch (IndexOutOfBoundsException e) {
@@ -285,6 +323,10 @@ public class MappedFileQueue {
         return true;
     }
 
+    /**
+     * 获取存储文件最小偏移量。从这里也可以看出，并不是直接返回
+     * 0，而是返回MappedFile的getFileFormOffset()方法
+     */
     public long getMinOffset() {
 
         if (!this.mappedFiles.isEmpty()) {
@@ -299,6 +341,10 @@ public class MappedFileQueue {
         return -1;
     }
 
+    /**
+     * 获取存储文件的最大偏移量。返回最后一个MappedFile的
+     * fileFromOffset，加上MappedFile当前的读指针
+     */
     public long getMaxOffset() {
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
@@ -307,6 +353,10 @@ public class MappedFileQueue {
         return 0;
     }
 
+    /**
+     * 返回存储文件当前的写指针。返回最后一个文件的
+     * fileFromOffset，加上当前写指针位置
+     */
     public long getMaxWrotePosition() {
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
@@ -454,10 +504,20 @@ public class MappedFileQueue {
 
     /**
      * Finds a mapped file by offset.
+     * 根据【消息存储的偏移量】查询
      *
      * @param offset Offset.
      * @param returnFirstOnNotFound If the mapped file is not found, then return the first one.
      * @return Mapped file or null (when not found and returnFirstOnNotFound is <code>false</code>).
+     * 根据消息偏移量offset查找MappedFile，但是不能直接使用
+     * offset%mappedFileSize。这是因为使用了内存映射，只要是存在于存
+     * 储目录下的文件，都需要对应创建内存映射文件，如果不定时将已消
+     * 费的消息从存储文件中删除，会造成极大的内存压力与资源浪费，所
+     * 以RocketMQ采取定时删除存储文件的策略。也就是说，在存储文件
+     * 中，第一个文件不一定是00000000000000000000，因为该文件在某一
+     * 时刻会被删除，所以根据offset定位MappedFile的算法为
+     * (int)((offset/this.mappedFileSize)-(mappedFile.getFileFromOffset()/this.MappedFileSize))
+
      */
     public MappedFile findMappedFileByOffset(final long offset, final boolean returnFirstOnNotFound) {
         try {
@@ -503,6 +563,11 @@ public class MappedFileQueue {
         return null;
     }
 
+    /**
+     * 返回队列中第一个MappedFile，这里忽略索引越界异常，可能一个都没有，返回null
+     * 先判断mappedFiles是否为空，然后get(0),因为存在并发，所以需要即使判断为空，还是可能索引越界
+     * @return MappedFile
+     */
     public MappedFile getFirstMappedFile() {
         MappedFile mappedFileFirst = null;
 

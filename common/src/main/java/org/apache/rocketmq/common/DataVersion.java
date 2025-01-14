@@ -19,14 +19,27 @@ package org.apache.rocketmq.common;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 
+/**
+ *从DataVersion的equals()方法来看，只有当timestamp与counter都相等时，两个DataVersion对象才相等。
+ * 那这两个值会在哪里被修改呢？
+ * 从DataVersion#nextVersion方法的调用情况来看，引起这两个值的变化主要有两种：
+    1.broker 上新创建了一个 topic
+    2.topic的发了的变化
+ * @author zhoujinxin
+ * @date 2025-01-14 11:53
+ */
+
 public class DataVersion extends RemotingSerializable {
+    // 时间戳
     private long timestamp = System.currentTimeMillis();
+    // 计数器，可以理解为最近的版本号
     private AtomicLong counter = new AtomicLong(0);
 
     public void assignNewOne(final DataVersion dataVersion) {
         this.timestamp = dataVersion.timestamp;
         this.counter.set(dataVersion.counter.get());
     }
+
 
     public void nextVersion() {
         this.timestamp = System.currentTimeMillis();
@@ -49,12 +62,19 @@ public class DataVersion extends RemotingSerializable {
         this.counter = counter;
     }
 
+    /**
+     * 当 timestamp 与 counter 都相等时，则两者相等
+     * @param
+     * @return
+     */
     @Override
     public boolean equals(final Object o) {
-        if (this == o)
+        if (this == o) {
             return true;
-        if (o == null || getClass() != o.getClass())
+        }
+        if (o == null || getClass() != o.getClass()) {
             return false;
+        }
 
         final DataVersion that = (DataVersion) o;
 

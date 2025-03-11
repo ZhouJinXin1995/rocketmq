@@ -45,6 +45,7 @@ public class PullMessageService extends ServiceThread {
 
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
+            // 延迟将pullRequest 放入队列
             this.scheduledExecutorService.schedule(new Runnable() {
                 @Override
                 public void run() {
@@ -92,7 +93,9 @@ public class PullMessageService extends ServiceThread {
 
         while (!this.isStopped()) {
             try {
+                // 从队列中获取 PullReques, 什么时候放进pullRequestQueue
                 PullRequest pullRequest = this.pullRequestQueue.take();
+                // 拉取消息
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {
             } catch (Exception e) {

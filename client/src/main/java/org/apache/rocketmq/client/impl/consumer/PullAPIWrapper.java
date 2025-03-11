@@ -141,18 +141,18 @@ public class PullAPIWrapper {
     }
 
     public PullResult pullKernelImpl(
-        final MessageQueue mq,
-        final String subExpression,
-        final String expressionType,
+        final MessageQueue mq, // 指定去哪个queue拉取消息
+        final String subExpression, // 表达式，就是tag/sql
+        final String expressionType, // 表达式类型，TAG/SQL
         final long subVersion,
-        final long offset,
-        final int maxNums,
+        final long offset, // 这个非常重要的，第一次拉取它的值是 0
+        final int maxNums, // 参数值默认是32
         final int sysFlag,
         final long commitOffset,
-        final long brokerSuspendMaxTimeMillis,
+        final long brokerSuspendMaxTimeMillis, // 当consumer拉取消息但broker没有时，此时broker会将请求挂起，默认是15s
         final long timeoutMillis,
-        final CommunicationMode communicationMode,
-        final PullCallback pullCallback
+        final CommunicationMode communicationMode, // 同步/异步
+        final PullCallback pullCallback // 回调
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
@@ -196,7 +196,7 @@ public class PullAPIWrapper {
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
                 brokerAddr = computePullFromWhichFilterServer(mq.getTopic(), brokerAddr);
             }
-
+            // 拉取消息
             PullResult pullResult = this.mQClientFactory.getMQClientAPIImpl().pullMessage(
                 brokerAddr,
                 requestHeader,

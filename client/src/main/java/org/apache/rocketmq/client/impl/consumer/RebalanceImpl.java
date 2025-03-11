@@ -235,9 +235,16 @@ public abstract class RebalanceImpl {
         return subscriptionInner;
     }
 
+    /**
+     * topic 重平衡
+     * @param topic topic
+     * @return
+     */
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
+            // 广播模式：不需要处理负载均衡，每个消费者都要消费，只需要更新负载信息
             case BROADCASTING: {
+                // 获取所有队列
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 if (mqSet != null) {
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, mqSet, isOrder);
@@ -254,8 +261,13 @@ public abstract class RebalanceImpl {
                 }
                 break;
             }
+            // 集群模式
             case CLUSTERING: {
+                // 从主题订阅信息缓存表中获取主题的队列信息, 获取这个topic下的所有队列
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
+                //发送请求从Broker中获取该消费组内当前所有的消费者客户端ID，主题的队
+                //列可能分布在多个Broker上，那么请求该发往哪个Broker呢？
+                //RocketeMQ从主题的路由信息表中随机选择一个Broker
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);
                 if (null == mqSet) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -266,18 +278,22 @@ public abstract class RebalanceImpl {
                 if (null == cidAll) {
                     log.warn("doRebalance, {} {}, get consumer id list failed", consumerGroup, topic);
                 }
-
+                // 如果mqSet、cidAll任意一个为空，则忽略本次消息队列负载
                 if (mqSet != null && cidAll != null) {
                     List<MessageQueue> mqAll = new ArrayList<MessageQueue>();
                     mqAll.addAll(mqSet);
 
+                    // 对cidAll、mqAll进行排序
+                    // 这一步很重要，同一个消费组内看到的视图应保持一致，确保同一个消费队列不会被多个消费者分配
                     Collections.sort(mqAll);
                     Collections.sort(cidAll);
 
+                    // 默认是平均分配策略
                     AllocateMessageQueueStrategy strategy = this.allocateMessageQueueStrategy;
 
                     List<MessageQueue> allocateResult = null;
                     try {
+                        // 分配算法
                         allocateResult = strategy.allocate(
                             this.consumerGroup,
                             this.mQClientFactory.getClientId(),
@@ -288,12 +304,12 @@ public abstract class RebalanceImpl {
                             e);
                         return;
                     }
-
+                    // 当前消费者需要消费的队列
                     Set<MessageQueue> allocateResultSet = new HashSet<MessageQueue>();
                     if (allocateResult != null) {
                         allocateResultSet.addAll(allocateResult);
                     }
-
+                    // 对比消息队列是否发生变化 更新负载均衡信息，传入参数是 allocateResultSet，即当前consumer分配到的队列
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, allocateResultSet, isOrder);
                     if (changed) {
                         log.info(

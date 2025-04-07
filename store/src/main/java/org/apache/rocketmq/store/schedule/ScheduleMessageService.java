@@ -55,6 +55,7 @@ public class ScheduleMessageService extends ConfigManager {
     private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentHashMap<Integer, Long>(32);
 
+    //TODO:broker启动时会初始化这个Map,key是延迟等级，共计18个，value就是延迟等级对应的时间
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<Integer, Long>(32);
     private final DefaultMessageStore defaultMessageStore;
@@ -120,7 +121,7 @@ public class ScheduleMessageService extends ConfigManager {
                 if (null == offset) {
                     offset = 0L;
                 }
-
+                //TODO:处理延迟消息
                 if (timeDelay != null) {
                     this.timer.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME);
                 }
@@ -131,6 +132,7 @@ public class ScheduleMessageService extends ConfigManager {
                 @Override
                 public void run() {
                     try {
+                        //TODO:持久化
                         if (started.get()) ScheduleMessageService.this.persist();
                     } catch (Throwable e) {
                         log.error("scheduleAtFixedRate flush exception", e);
@@ -259,7 +261,19 @@ public class ScheduleMessageService extends ConfigManager {
             return result;
         }
 
+        /**
+         *
+         * 1.根据延迟topic和延迟queueid获取consumequeue，并从队列中读取索引单元
+         * 2.计算消息的投递时间。从索引单元中取出消息的保存时间(延迟消息的索引单元会将tag hashcode 替换为消息的存储时间),然后根据延迟等级获取出延迟时间，然后二者相加就是消息的投递时间。
+         * 3.如果投递时间到了
+         *    3.1 则根据索引单元中的commitlog offset 和 msg size 将该条消息A从commitlog中读取出 来.
+         *    3.2 将读取出来的消息属性复制到一个新的消息对象体B中,将A中备份的原始topic, queueid 读取 出来重新设置到B中,并清除延迟属性,使其成为一条普通消息.
+         *    3.3 调用CommitLog#putMessage(msg)方法，再次将消息B写入到commitlog中。这样消费者就可以消费到订阅了该topic的消息。
+         * 4.如果投递时间没到
+         *    4.1 计算剩余投递时间countdown（投递时间-当前时间), 然后开启一个JDK的Timer延迟任务，延迟时间就是countdown,继续执行DeliverDelayedMessageTimerTask的逻辑。
+         */
         public void executeOnTimeup() {
+            //TODO:根据延迟topic和延迟queueid 去获取Consumequeue
             ConsumeQueue cq =
                 ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                     delayLevel2QueueId(delayLevel));
@@ -270,6 +284,7 @@ public class ScheduleMessageService extends ConfigManager {
                 SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
                 if (bufferCQ != null) {
                     try {
+                        //TODO:offset用来标记队列读取到哪里了
                         long nextOffset = offset;
                         int i = 0;
                         ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
@@ -291,25 +306,29 @@ public class ScheduleMessageService extends ConfigManager {
                             }
 
                             long now = System.currentTimeMillis();
+                            //TODO:计算投递时间，时间存储在了tag hashcode 中了
                             long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode);
 
                             nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
 
                             long countdown = deliverTimestamp - now;
-
+                            //TODO:投递时间到了
                             if (countdown <= 0) {
+                                //TODO:去broker中将消息读取出来
                                 MessageExt msgExt =
                                     ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                         offsetPy, sizePy);
 
                                 if (msgExt != null) {
                                     try {
+                                        //TODO:构建新的消息体，将原来的消息信息设置到这里，并将topic和queueid设置为原始的topic和queueid(前面备份过）
                                         MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);
                                         if (TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC.equals(msgInner.getTopic())) {
                                             log.error("[BUG] the real topic of schedule msg is {}, discard the msg. msg={}",
                                                     msgInner.getTopic(), msgInner);
                                             continue;
                                         }
+                                        //TODO:将消息再次写入commitlog中，topic是原始topic,这样消费者就可以去消费了
                                         PutMessageResult putMessageResult =
                                             ScheduleMessageService.this.writeMessageStore
                                                 .putMessage(msgInner);
@@ -343,6 +362,7 @@ public class ScheduleMessageService extends ConfigManager {
                                     }
                                 }
                             } else {
+                                // todo 如果投递时间没到,开启一个JDK的Timer延迟任务，延迟时间就是countdown,继续执行DeliverDelayedMessageTimerTask的逻辑
                                 ScheduleMessageService.this.timer.schedule(
                                     new DeliverDelayedMessageTimerTask(this.delayLevel, nextOffset),
                                     countdown);
@@ -350,10 +370,11 @@ public class ScheduleMessageService extends ConfigManager {
                                 return;
                             }
                         } // end of for
-
+                        // todo 更新延迟消息队列的消费进度(后面持久化也就是指的它）
                         nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
                         ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(
                             this.delayLevel, nextOffset), DELAY_FOR_A_WHILE);
+
                         ScheduleMessageService.this.updateOffset(this.delayLevel, nextOffset);
                         return;
                     } finally {

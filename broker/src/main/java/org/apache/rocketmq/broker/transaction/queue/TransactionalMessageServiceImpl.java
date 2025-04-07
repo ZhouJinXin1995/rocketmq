@@ -219,6 +219,15 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                             }
                         }
                         List<MessageExt> opMsg = pullResult.getMsgFoundList();
+
+                        /**
+                         * 什么样的消息需要回查？
+                         * 1. 每一条半事务消息如果经过了commit/rollback, 那么对应就会创建一个Op消息，反过来说，如果没有Op消息，
+                         *    但是有Half消息，那么说明是二阶段失败了（本地事务返回的状态码是UNKNOW），此时需要回查
+                         *
+                         * 2. 还有就是 TM在6秒内没有将最终确认状态发送给TC，此时也会触发回查
+                         *
+                         */
                         boolean isNeedCheck = (opMsg == null && valueOfCurrentMinusBorn > checkImmunityTime)
                             || (opMsg != null && (opMsg.get(opMsg.size() - 1).getBornTimestamp() - startTime > transactionTimeout))
                             || (valueOfCurrentMinusBorn <= -1);
@@ -227,6 +236,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                             if (!putBackHalfMsgQueue(msgExt, i)) {
                                 continue;
                             }
+                            //TODO:...."消息回查"
                             listener.resolveHalfMsg(msgExt);
                         } else {
                             pullResult = fillOpRemoveMap(removeMap, opQueue, pullResult.getNextBeginOffset(), halfOffset, doneOpOffset);

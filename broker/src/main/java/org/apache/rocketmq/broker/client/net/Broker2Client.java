@@ -64,10 +64,12 @@ public class Broker2Client {
         final Channel channel,
         final CheckTransactionStateRequestHeader requestHeader,
         final MessageExt messageExt) throws Exception {
+        //TODO: code：RequestCode.CHECK_TRANSACTION_STATE
         RemotingCommand request =
             RemotingCommand.createRequestCommand(RequestCode.CHECK_TRANSACTION_STATE, requestHeader);
         request.setBody(MessageDecoder.encode(messageExt, false));
         try {
+            //TODO: 发送给生产者
             this.brokerController.getRemotingServer().invokeOneway(channel, request, 10);
         } catch (Exception e) {
             log.error("Check transaction failed because invoke producer exception. group={}, msgId={}, error={}",

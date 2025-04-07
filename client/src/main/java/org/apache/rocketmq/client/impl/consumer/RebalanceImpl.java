@@ -164,43 +164,55 @@ public abstract class RebalanceImpl {
     }
 
     public void lockAll() {
+        // 从处理队列表中获取broker对应的消息队列，key为broker名称，value为broker下的消息队列
         HashMap<String, Set<MessageQueue>> brokerMqs = this.buildProcessQueueTableByBrokerName();
-
+        // 遍历订阅的消息队列
         Iterator<Entry<String, Set<MessageQueue>>> it = brokerMqs.entrySet().iterator();
         while (it.hasNext()) {
             Entry<String, Set<MessageQueue>> entry = it.next();
+            // broker名称
             final String brokerName = entry.getKey();
+            // 获取消息队列
             final Set<MessageQueue> mqs = entry.getValue();
 
             if (mqs.isEmpty())
                 continue;
-
+            // 根据broker名称获取broker信息
             FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(brokerName, MixAll.MASTER_ID, true);
             if (findBrokerResult != null) {
+                // 构建加锁请求
                 LockBatchRequestBody requestBody = new LockBatchRequestBody();
+                // 设置消费者组
                 requestBody.setConsumerGroup(this.consumerGroup);
+                // 设置ID
                 requestBody.setClientId(this.mQClientFactory.getClientId());
+                // 设置要加锁的消息队列
                 requestBody.setMqSet(mqs);
 
                 try {
+                    // 批量进行加锁，返回加锁成功的消息队列
                     Set<MessageQueue> lockOKMQSet =
                         this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
-
+                    // 批量进行加锁，返回加锁成功的消息队列
                     for (MessageQueue mq : lockOKMQSet) {
+                        // 从处理队列表中获取对应的处理队列对象
                         ProcessQueue processQueue = this.processQueueTable.get(mq);
+                        // 如果不为空，设置locked为true表示加锁成功
                         if (processQueue != null) {
                             if (!processQueue.isLocked()) {
                                 log.info("the message queue locked OK, Group: {} {}", this.consumerGroup, mq);
                             }
-
+                            // 设置加锁成功标记
                             processQueue.setLocked(true);
                             processQueue.setLastLockTimestamp(System.currentTimeMillis());
                         }
                     }
+                    // 处理加锁失败的消息队列
                     for (MessageQueue mq : mqs) {
                         if (!lockOKMQSet.contains(mq)) {
                             ProcessQueue processQueue = this.processQueueTable.get(mq);
                             if (processQueue != null) {
+                                // 处理加锁失败的消息队列
                                 processQueue.setLocked(false);
                                 log.warn("the message queue locked Failed, Group: {} {}", this.consumerGroup, mq);
                             }

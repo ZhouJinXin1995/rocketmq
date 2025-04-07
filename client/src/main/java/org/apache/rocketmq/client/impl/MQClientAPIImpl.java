@@ -1063,6 +1063,7 @@ public class MQClientAPIImpl {
         final String remark,
         final long timeoutMillis
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        //TODO：事务结束的code是：RequestCode.END_TRANSACTION
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.END_TRANSACTION, requestHeader);
 
         request.setRemark(remark);
